@@ -46,71 +46,8 @@ if USE_BERTWEET:
     print("✅ Modelo cargado.")
 
 # Mapeo de labels del modelo a etiquetas legibles
-LABEL_MAP = {
-    "LABEL_0": "Negative",
-    "LABEL_1": "Neutral",
-    "LABEL_2": "Positive",
-    # Por si el modelo devuelve directo el nombre
-    "negative": "Negative",
-    "neutral":  "Neutral",
-    "positive": "Positive",
-    "NEGATIVE": "Negative",
-    "NEUTRAL":  "Neutral",
-    "POSITIVE": "Positive",
-}
+from nlp_utils import LABEL_MAP, clean_tweet, get_or_create_dim, get_or_create_date
 
-# ─── Limpieza de texto ────────────────────────────────────────────────────────
-def clean_tweet(text: str) -> str:
-    """Limpia un tweet para procesamiento NLP."""
-    if not isinstance(text, str):
-        return ""
-    text = re.sub(r'http\S+', '', text)                      # Quita URLs
-    text = re.sub(r'@\w+', '', text)                          # Quita menciones
-    text = re.sub(r'#(\w+)', r'\1', text)                     # Quita # pero deja la palabra
-    text = emoji.demojize(text, delimiters=(" ", " "))        # Convierte emojis a texto
-    text = re.sub(r'[^a-zA-Z0-9\s:_áéíóúüñÁÉÍÓÚÜÑ]', '', text)  # Quita chars especiales
-    text = re.sub(r'\s+', ' ', text).strip()                  # Normaliza espacios
-    return text.lower()
-
-# ─── Helpers para inserción BD ────────────────────────────────────────────────
-def get_or_create_dim(conn, table: str, id_col: str, name_col: str, value: str) -> int:
-    """Busca un registro en una tabla dimensión; lo crea si no existe. Devuelve el ID."""
-    row = conn.execute(
-        text(f"SELECT {id_col} FROM {table} WHERE {name_col} = :val"),
-        {"val": value}
-    ).fetchone()
-    if row:
-        return row[0]
-    row = conn.execute(
-        text(f"INSERT INTO {table} ({name_col}) VALUES (:val) RETURNING {id_col}"),
-        {"val": value}
-    ).fetchone()
-    return row[0]
-
-def get_or_create_date(conn, date_str: str) -> int:
-    """Inserta o recupera una fecha en DimDate. Devuelve el date_id."""
-    dt = pd.to_datetime(date_str, utc=True)
-    row = conn.execute(
-        text("SELECT date_id FROM DimDate WHERE full_date = :d"),
-        {"d": dt.date()}
-    ).fetchone()
-    if row:
-        return row[0]
-    row = conn.execute(
-        text("""
-            INSERT INTO DimDate (full_date, day, month, year, day_of_week)
-            VALUES (:d, :day, :month, :year, :dow)
-            RETURNING date_id
-        """),
-        {
-            "d":    dt.date(),
-            "day":  dt.day,
-            "month": dt.month,
-            "year": dt.year,
-            "dow":  dt.strftime("%A")
-        }
-    ).fetchone()
-    return row[0]
 
 # ─── Pipeline principal ───────────────────────────────────────────────────────
 def run_etl(csv_path: str):

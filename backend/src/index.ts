@@ -1,7 +1,9 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import { toNodeHandler } from 'better-auth/node';
 import apiRoutes from './routes/api.routes.js';
+import { auth } from './config/auth.js';
 
 // Load environment variables
 dotenv.config();
@@ -9,11 +11,29 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Enable CORS so the future frontend can query the API
-app.use(cors());
+// Enable CORS with support for credentials and dynamic localhost origin matching
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps, postman, curl)
+    if (!origin) return callback(null, true);
+    
+    // Match any local development origin (e.g. localhost:5173, localhost:5174)
+    const isLocalhost = /^http:\/\/localhost(:\d+)?$/.test(origin);
+    if (isLocalhost) {
+      callback(null, true);
+    } else {
+      callback(null, false); // Block other origins
+    }
+  },
+  credentials: true
+}));
+
+// Mount better-auth handlers BEFORE express.json() parser consumes the raw request stream
+app.all('/api/auth/{*splat}', toNodeHandler(auth));
 
 // Enable parsing JSON bodies
 app.use(express.json());
+
 
 // Simple custom request logging middleware
 app.use((req, res, next) => {

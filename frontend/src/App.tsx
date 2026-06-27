@@ -2,7 +2,12 @@ import { useState, useEffect } from 'react';
 import { 
   RefreshCw, 
   AlertTriangle,
-  Flame
+  Flame,
+  LayoutDashboard,
+  FlaskConical,
+  Database,
+  LogOut,
+  User as UserIcon
 } from 'lucide-react';
 import { 
   type DashboardFilters, 
@@ -21,8 +26,26 @@ import { KPICards } from './components/KPICards';
 import { FiltersBar } from './components/FiltersBar';
 import { ChartsSection } from './components/ChartsSection';
 import { TweetsFeed } from './components/TweetsFeed';
+import { NLPPlayground } from './components/NLPPlayground';
+import { DatasetGenerator } from './components/DatasetGenerator';
+import { AuthPage } from './components/AuthPage';
+import { authClient } from './services/auth.client';
 
 function App() {
+  const { data: sessionData, isPending: sessionLoading, refetch: refetchSession } = authClient.useSession();
+  const user = sessionData?.user as any;
+  const isAdmin = user?.role === 'Admin';
+
+  // View mode: 'dashboard' | 'playground' | 'generator'
+  const [view, setView] = useState<'dashboard' | 'playground' | 'generator'>('dashboard');
+
+  // Reset to dashboard if user is not an Admin but somehow lands on generator view
+  useEffect(() => {
+    if (user && user.role !== 'Admin' && view === 'generator') {
+      setView('dashboard');
+    }
+  }, [user, view]);
+
   // Filter and pagination states
   const [filters, setFilters] = useState<DashboardFilters>({
     airlineId: undefined,
@@ -124,6 +147,19 @@ function App() {
     setCurrentPage(newPage);
   };
 
+  if (sessionLoading) {
+    return (
+      <div className="loader-wrapper" aria-busy="true" aria-live="polite">
+        <div className="pulse-loader" />
+        <p className="brand-subtitle" style={{ letterSpacing: '0.05em' }}>Synchronizing Secure Session...</p>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <AuthPage onLoginSuccess={refetchSession} />;
+  }
+
   return (
     <div className="dashboard-container">
       {/* Header Section */}
@@ -139,6 +175,61 @@ function App() {
         </div>
 
         <div className="header-actions">
+          {/* Tab navigation */}
+          <nav className="nav-tab-bar" aria-label="Main navigation">
+            <button
+              id="nav-dashboard"
+              className={`nav-tab${view === 'dashboard' ? ' active' : ''}`}
+              onClick={() => setView('dashboard')}
+              aria-current={view === 'dashboard' ? 'page' : undefined}
+            >
+              <LayoutDashboard size={15} aria-hidden="true" />
+              Dashboard
+            </button>
+            <button
+              id="nav-playground"
+              className={`nav-tab${view === 'playground' ? ' active' : ''}`}
+              onClick={() => setView('playground')}
+              aria-current={view === 'playground' ? 'page' : undefined}
+            >
+              <FlaskConical size={15} aria-hidden="true" />
+              NLP Playground
+            </button>
+            {isAdmin && (
+              <button
+                id="nav-generator"
+                className={`nav-tab${view === 'generator' ? ' active' : ''}`}
+                onClick={() => setView('generator')}
+                aria-current={view === 'generator' ? 'page' : undefined}
+              >
+                <Database size={15} aria-hidden="true" />
+                Dataset Generator
+              </button>
+            )}
+          </nav>
+
+          {/* User profile & logout */}
+          <div className="user-profile-badge">
+            <div className="user-icon-circle">
+              <UserIcon size={12} color="#ffffff" />
+            </div>
+            <span className="user-profile-name">
+              {user.name} <span className="user-profile-role">{user.role}</span>
+            </span>
+            <button 
+              className="btn-signout"
+              onClick={async () => {
+                await authClient.signOut();
+                refetchSession();
+              }}
+              title="Sign Out"
+            >
+              <LogOut size={12} />
+              Sign Out
+            </button>
+          </div>
+
+          {view === 'dashboard' && (
           <button 
             className="btn-refresh" 
             onClick={handleRefresh}
@@ -153,14 +244,24 @@ function App() {
             />
             {refreshing ? 'Refreshing...' : 'Refresh'}
           </button>
+          )}
         </div>
       </header>
 
-      {/* Filters Bar */}
-      <FiltersBar filters={filters} onFilterChange={handleFilterChange} />
+      {/* Filters Bar — only on Dashboard */}
+      {view === 'dashboard' && (
+        <FiltersBar filters={filters} onFilterChange={handleFilterChange} />
+      )}
 
-      {/* Main Viewport */}
-      {loading ? (
+      {/* NLP Playground View */}
+      {view === 'playground' && <NLPPlayground />}
+
+      {/* Dataset Generator View */}
+      {view === 'generator' && <DatasetGenerator />}
+
+      {/* Main Dashboard Viewport */}
+      {view === 'dashboard' && (
+        loading ? (
         <div className="loader-wrapper" aria-busy="true" aria-live="polite">
           <div className="pulse-loader" />
           <p className="brand-subtitle" style={{ letterSpacing: '0.05em' }}>Loading Dashboard Analytics...</p>
@@ -198,6 +299,7 @@ function App() {
             loading={tweetsLoading}
           />
         </>
+      )
       )}
     </div>
   );

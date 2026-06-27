@@ -1,13 +1,26 @@
 import { Router } from 'express';
+import multer from 'multer';
 import { getKPIs, getTrends } from '../controllers/sentiment.controller.js';
 import { getAirlinesList, getAirlinesSentiment } from '../controllers/airline.controller.js';
 import { getTopicsList, getTopics } from '../controllers/topic.controller.js';
 import { getTweets } from '../controllers/tweet.controller.js';
+import { analyzeText, uploadDataset } from '../controllers/ai.controller.js';
+import { generateDataset, generateAndLoad } from '../controllers/dataset.controller.js';
 import pool from '../config/db.js';
+import { requireAuth, requireAdmin } from '../utils/auth-middleware.js';
 
 const router = Router();
 
+// Configure multer in-memory storage for file uploads
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 50 * 1024 * 1024, // 50MB max file size
+  },
+});
+
 // Health check endpoint (also verifies DB connectivity)
+
 router.get('/health', async (req, res) => {
   try {
     const dbCheck = await pool.query('SELECT 1 as connection');
@@ -26,19 +39,28 @@ router.get('/health', async (req, res) => {
   }
 });
 
-// KPI & Trend Routes
-router.get('/kpis', getKPIs);
-router.get('/trends', getTrends);
+// KPI & Trend Routes (Protected - Viewer / Admin)
+router.get('/kpis', requireAuth, getKPIs);
+router.get('/trends', requireAuth, getTrends);
 
-// Airline Routes
-router.get('/airlines/list', getAirlinesList);
-router.get('/airlines', getAirlinesSentiment);
+// Airline Routes (Protected - Viewer / Admin)
+router.get('/airlines/list', requireAuth, getAirlinesList);
+router.get('/airlines', requireAuth, getAirlinesSentiment);
 
-// Topic Routes
-router.get('/topics/list', getTopicsList);
-router.get('/topics', getTopics);
+// Topic Routes (Protected - Viewer / Admin)
+router.get('/topics/list', requireAuth, getTopicsList);
+router.get('/topics', requireAuth, getTopics);
 
-// Tweets Routes
-router.get('/tweets', getTweets);
+// Tweets Routes (Protected - Viewer / Admin)
+router.get('/tweets', requireAuth, getTweets);
+
+// AI / NLP & ETL Ingestion Routes (Restricted - Admin Only)
+router.post('/analyze', requireAdmin, analyzeText);
+router.post('/etl/upload', requireAdmin, upload.single('dataset'), uploadDataset);
+
+// Dataset Generator Routes (Restricted - Admin Only)
+router.get('/dataset/generate', requireAdmin, generateDataset);
+router.post('/dataset/generate-and-load', requireAdmin, generateAndLoad);
 
 export default router;
+

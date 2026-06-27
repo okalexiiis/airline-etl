@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+python-multipart
+transformers
+torch
+pandas
+emoji
+sqlalchemy
+psycopg2-binary
+python-dotenv
+__pycache__
