@@ -2,47 +2,109 @@ import React from 'react';
 import { 
   ChevronLeft, 
   ChevronRight, 
-  MessageSquare,
-  Globe
+  AlertCircle
 } from 'lucide-react';
 import type { PaginatedTweets } from '../services/api';
-
-// Custom Twitter icon path since brand icons were removed in newer lucide versions
-const TwitterIcon: React.FC<{ size?: number; style?: React.CSSProperties }> = ({ size = 14, style }) => (
-  <svg
-    xmlns="http://www.w3.org/2000/svg"
-    width={size}
-    height={size}
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    style={style}
-  >
-    <path d="M22 4s-.7 2.1-2 3.4c1.6 10-9.4 17.3-18 11.6 2.2.1 4.4-.6 6-2C3 15.5.5 9.6 3 5c2.2 2.6 5.6 4.1 9 4-.9-4.2 4-6.6 7-3.8 1.1 0 3-1.2 3-1.2z" />
-  </svg>
-);
 
 interface TweetsFeedProps {
   paginatedTweets: PaginatedTweets | null;
   currentPage: number;
   onPageChange: (page: number) => void;
   loading?: boolean;
+  error?: string | null;
 }
+
+const SkeletonRow: React.FC = () => (
+  <tr className="skeleton-pulse">
+    <td className="tweet-text-cell">
+      <div className="skeleton-cell wide" />
+    </td>
+    <td><div className="skeleton-cell medium" /></td>
+    <td><div className="skeleton-cell short" /></td>
+    <td><div className="skeleton-cell short" /></td>
+    <td><div className="skeleton-cell short" /></td>
+    <td><div className="skeleton-cell short" /></td>
+    <td><div className="skeleton-cell short" /></td>
+  </tr>
+);
+
+const TweetsSkeleton: React.FC = () => (
+  <div className="tweets-table-container">
+    <table className="tweets-skeleton-table">
+      <thead>
+        <tr>
+          <th scope="col">Tweet Content</th>
+          <th scope="col">Sentiment</th>
+          <th scope="col">Confidence</th>
+          <th scope="col">Airline</th>
+          <th scope="col">Topic</th>
+          <th scope="col">Origin</th>
+          <th scope="col">Date</th>
+        </tr>
+      </thead>
+      <tbody>
+        <SkeletonRow />
+        <SkeletonRow />
+        <SkeletonRow />
+        <SkeletonRow />
+        <SkeletonRow />
+      </tbody>
+    </table>
+  </div>
+);
+
+const EmptyFeedState: React.FC = () => (
+  <div className="tweets-empty-state">
+    <h3 className="empty-title">No matching records found</h3>
+    <p className="empty-subtitle">Try modifying your filter criteria or generate a dataset to populate the feed.</p>
+  </div>
+);
+
+const ErrorFeedState: React.FC<{ message: string }> = ({ message }) => (
+  <div className="tweets-error-state">
+    <AlertCircle size={28} className="error-icon" aria-hidden="true" />
+    <h3 className="error-title">Failed to load tweets</h3>
+    <p className="error-subtitle">{message}</p>
+  </div>
+);
 
 export const TweetsFeed: React.FC<TweetsFeedProps> = ({ 
   paginatedTweets, 
   currentPage, 
   onPageChange,
-  loading = false
+  loading = false,
+  error = null
 }) => {
+  if (error && !paginatedTweets) {
+    return (
+      <section className="glass-card tweets-section" aria-label="Tweets detailed list">
+        <div className="chart-title-group" style={{ marginBottom: '0.5rem' }}>
+          <div>
+            <h2 className="chart-title">Tweets</h2>
+          </div>
+        </div>
+        <ErrorFeedState message={error} />
+      </section>
+    );
+  }
+
+  if (loading) {
+    return (
+      <section className="glass-card tweets-section" aria-label="Tweets detailed list" aria-busy="true">
+        <div className="chart-title-group" style={{ marginBottom: '0.5rem' }}>
+          <div>
+            <h2 className="chart-title">Tweets</h2>
+          </div>
+        </div>
+        <TweetsSkeleton />
+      </section>
+    );
+  }
+
   if (!paginatedTweets) return null;
 
   const { data: tweets, pagination } = paginatedTweets;
 
-  // Format date helper
   const formatDate = (dateStr: string) => {
     try {
       const date = new Date(dateStr);
@@ -56,138 +118,106 @@ export const TweetsFeed: React.FC<TweetsFeedProps> = ({
     }
   };
 
-  // Color mapping helper for confidence scores
   const getConfidenceStyle = (score: number) => {
-    if (score >= 0.85) return { color: '#10b981', fontWeight: 600 }; // Green
-    if (score >= 0.6) return { color: '#f59e0b', fontWeight: 600 }; // Amber
-    return { color: '#f43f5e', fontWeight: 600 }; // Rose
-  };
-
-  // Icon helper for platform
-  const getPlatformIcon = (platform: string) => {
-    const p = platform.toLowerCase();
-    if (p === 'twitter' || p === 'x') {
-      return <TwitterIcon size={14} style={{ color: '#1da1f2', marginRight: '4px', verticalAlign: 'middle' }} />;
-    }
-    if (p === 'web') {
-      return <Globe size={14} style={{ color: '#a855f7', marginRight: '4px', verticalAlign: 'middle' }} />;
-    }
-    return <MessageSquare size={14} style={{ color: '#94a3b8', marginRight: '4px', verticalAlign: 'middle' }} />;
+    if (score >= 0.85) return { color: 'var(--color-positive)', fontWeight: 600 };
+    if (score >= 0.6) return { color: 'var(--color-neutral)', fontWeight: 600 };
+    return { color: 'var(--color-negative)', fontWeight: 600 };
   };
 
   return (
     <section className="glass-card tweets-section" aria-label="Tweets detailed list">
       <div className="chart-title-group" style={{ marginBottom: '0.5rem' }}>
         <div>
-          <h2 className="chart-title">Analytic Feed Explorer</h2>
-          <p className="brand-subtitle">Browse, sort, and search individual sentiment predictions</p>
+          <h2 className="chart-title">Tweets</h2>
         </div>
         <span className="kpi-meta">{pagination.total.toLocaleString()} records match</span>
       </div>
 
-      <div className="tweets-table-container" style={{ opacity: loading ? 0.5 : 1, transition: 'opacity 0.25s ease-in-out' }}>
-        <table className="tweets-table">
-          <thead>
-            <tr>
-              <th scope="col">Tweet Content</th>
-              <th scope="col">Sentiment</th>
-              <th scope="col">Confidence</th>
-              <th scope="col">Airline</th>
-              <th scope="col">Topic</th>
-              <th scope="col">Origin</th>
-              <th scope="col">Date</th>
-            </tr>
-          </thead>
-          <tbody>
-            {tweets.length > 0 ? (
-              tweets.map((tweet) => (
-                <tr key={tweet.fact_id}>
-                  {/* Tweet Text */}
-                  <td className="tweet-text-cell">
-                    <p className="tweet-text-original">{tweet.tweet_text}</p>
-                    {tweet.tweet_text_clean && (
-                      <p className="tweet-text-clean">Cleaned: {tweet.tweet_text_clean}</p>
-                    )}
-                  </td>
-                  
-                  {/* Sentiment Chip */}
-                  <td>
-                    <span className={`sentiment-chip sentiment-${tweet.sentiment.toLowerCase()}`}>
-                      {tweet.sentiment}
-                    </span>
-                  </td>
-
-                  {/* Confidence */}
-                  <td>
-                    <span className="confidence-badge" style={getConfidenceStyle(tweet.confidence)}>
-                      {Math.round(tweet.confidence * 100)}%
-                    </span>
-                  </td>
-
-                  {/* Airline */}
-                  <td style={{ fontWeight: 600, color: '#f8fafc' }}>
-                    {tweet.airline}
-                  </td>
-
-                  {/* Topic */}
-                  <td style={{ color: '#cbd5e1', fontSize: '0.8125rem' }}>
-                    {tweet.topic}
-                  </td>
-
-                  {/* Platform */}
-                  <td>
-                    <span className="platform-badge">
-                      {getPlatformIcon(tweet.platform)}
-                      {tweet.platform}
-                    </span>
-                  </td>
-
-                  {/* Date */}
-                  <td style={{ whiteSpace: 'nowrap', color: '#94a3b8' }}>
-                    {formatDate(tweet.date)}
-                  </td>
+      {tweets.length > 0 ? (
+        <>
+          <div className="tweets-table-container">
+            <table className="tweets-table">
+              <thead>
+                <tr>
+                  <th scope="col">Tweet Content</th>
+                  <th scope="col">Sentiment</th>
+                  <th scope="col">Confidence</th>
+                  <th scope="col">Airline</th>
+                  <th scope="col">Topic</th>
+                  <th scope="col">Origin</th>
+                  <th scope="col">Date</th>
                 </tr>
-              ))
-            ) : (
-              <tr>
-                <td colSpan={7} style={{ textAlign: 'center', padding: '3rem' }}>
-                  <div className="empty-state">No matching records found. Try modifying your filter criteria.</div>
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+              </thead>
+              <tbody>
+                {tweets.map((tweet) => (
+                  <tr key={tweet.fact_id}>
+                    <td className="tweet-text-cell">
+                      <p className="tweet-text-original">{tweet.tweet_text}</p>
+                      {tweet.tweet_text_clean && (
+                        <p className="tweet-text-clean">Cleaned: {tweet.tweet_text_clean}</p>
+                      )}
+                    </td>
+                    <td>
+                      <span className={`sentiment-chip sentiment-${tweet.sentiment.toLowerCase()}`}>
+                        {tweet.sentiment}
+                      </span>
+                    </td>
+                    <td>
+                      <span className="confidence-badge" style={getConfidenceStyle(tweet.confidence)}>
+                        {Math.round(tweet.confidence * 100)}%
+                      </span>
+                    </td>
+                    <td className="td-airline">
+                      {tweet.airline}
+                    </td>
+                    <td className="td-topic">
+                      {tweet.topic}
+                    </td>
+                    <td>
+                      <span className="platform-badge">
+                        {tweet.platform}
+                      </span>
+                    </td>
+                    <td className="td-date">
+                      {formatDate(tweet.date)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
 
-      {/* Pagination Controls */}
-      {pagination.totalPages > 1 && (
-        <div className="pagination-group">
-          <div className="pagination-info" aria-live="polite">
-            Page <strong style={{ color: '#f8fafc' }}>{currentPage}</strong> of{' '}
-            <strong style={{ color: '#f8fafc' }}>{pagination.totalPages}</strong>{' '}
-            ({pagination.total.toLocaleString()} total items)
-          </div>
-          <div className="pagination-controls">
-            <button
-              className="btn-pagination"
-              onClick={() => onPageChange(currentPage - 1)}
-              disabled={!pagination.hasPrevPage}
-              aria-label="Previous Page"
-            >
-              <ChevronLeft size={16} aria-hidden="true" />
-              Prev
-            </button>
-            <button
-              className="btn-pagination"
-              onClick={() => onPageChange(currentPage + 1)}
-              disabled={!pagination.hasNextPage}
-              aria-label="Next Page"
-            >
-              Next
-              <ChevronRight size={16} aria-hidden="true" />
-            </button>
-          </div>
-        </div>
+          {pagination.totalPages > 1 && (
+            <div className="pagination-group">
+              <div className="pagination-info" aria-live="polite">
+                Page <strong>{currentPage}</strong> of{' '}
+                <strong>{pagination.totalPages}</strong>
+              </div>
+              <div className="pagination-controls">
+                <button
+                  className="btn-pagination"
+                  onClick={() => onPageChange(currentPage - 1)}
+                  disabled={!pagination.hasPrevPage}
+                  aria-label="Previous Page"
+                >
+                  <ChevronLeft size={16} aria-hidden="true" />
+                  Prev
+                </button>
+                <button
+                  className="btn-pagination"
+                  onClick={() => onPageChange(currentPage + 1)}
+                  disabled={!pagination.hasNextPage}
+                  aria-label="Next Page"
+                >
+                  Next
+                  <ChevronRight size={16} aria-hidden="true" />
+                </button>
+              </div>
+            </div>
+          )}
+        </>
+      ) : (
+        <EmptyFeedState />
       )}
     </section>
   );

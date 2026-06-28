@@ -19,35 +19,6 @@ import pandas as pd
 from datetime import datetime, timedelta
 from typing import Optional
 from io import StringIO
-from transformers import pipeline as hf_pipeline
-
-# ─── Model — loaded once at module level ──────────────────────────────────────
-
-_SENTIMENT_PIPELINE = hf_pipeline(
-    "text-classification",
-    model="cardiffnlp/twitter-roberta-base-sentiment-latest",
-    top_k=1,          # return only the top label
-    truncation=True,
-    max_length=128,
-)
-
-_LABEL_MAP = {
-    "LABEL_0": "negative",
-    "LABEL_1": "neutral",
-    "LABEL_2": "positive",
-}
-
-
-def _classify(text: str) -> tuple[str, float]:
-    """
-    Run text through BERTweet and return (sentiment_label, confidence).
-    confidence is rounded to 4 decimal places.
-    """
-    result = _SENTIMENT_PIPELINE(text)[0]          # top-1 result is a list with one dict
-    label = _LABEL_MAP.get(result["label"], result["label"])
-    confidence = round(result["score"], 4)
-    return label, confidence
-
 
 # ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -294,8 +265,11 @@ def generate_dataset(
     if topics is None or len(topics) == 0:
         topics = TOPICS
 
-    # Normalize distribution
+    # Validate distribution
     total = sum(sentiment_dist.values())
+    if total == 0:
+        raise ValueError("Sentiment distribution must have at least one non-zero value")
+
     neg_pct = sentiment_dist.get("negative", 60) / total
     neu_pct = sentiment_dist.get("neutral", 20) / total
     pos_pct = sentiment_dist.get("positive", 20) / total
@@ -310,9 +284,7 @@ def generate_dataset(
     if dt_end <= dt_start:
         dt_end = dt_start + timedelta(days=1)
 
-    rows = []
     used_ids = set()
-
     def _unique_id() -> int:
         while True:
             tid = random.randint(560_000_000_000_000_000, 580_000_000_000_000_000)
@@ -320,25 +292,31 @@ def generate_dataset(
                 used_ids.add(tid)
                 return tid
 
-    # Generate negative tweets
     avail_topics = [t for t in topics if t in NEGATIVE_TEMPLATES]
     if not avail_topics:
         avail_topics = list(NEGATIVE_TEMPLATES.keys())
 
+    # -------------------------------------------------------------
+    # Step 1: Generate all rows with placeholder confidences.
+    #         Collect all generated texts for batch inference.
+    # -------------------------------------------------------------
+    rows: list[dict] = []
+    generated_texts: list[str] = []
+
+    # Negative tweets
     for _ in range(n_neg):
         airline = random.choice(airlines)
         topic = random.choice(avail_topics)
         template = random.choice(NEGATIVE_TEMPLATES[topic])
         text = _fill_template(template, airline)
-        # Cambio 1 & 2: real sentiment scores from BERTweet
-        _, confidence = _classify(text)
         dt = _random_date(dt_start, dt_end)
+        generated_texts.append(text)
         rows.append({
             "tweet_id": _unique_id(),
             "airline_sentiment": "negative",
-            "airline_sentiment_confidence": confidence,
+            "airline_sentiment_confidence": 0.0,    # placeholder
             "negativereason": topic,
-            "negativereason_confidence": confidence,   # Cambio 2: same real confidence
+            "negativereason_confidence": 0.0,        # placeholder
             "airline": airline,
             "airline_sentiment_gold": "",
             "name": random.choice(NAMES),
@@ -351,20 +329,19 @@ def generate_dataset(
             "user_timezone": random.choice(TIMEZONES),
         })
 
-    # Generate neutral tweets
+    # Neutral tweets
     for _ in range(n_neu):
         airline = random.choice(airlines)
         template = random.choice(NEUTRAL_TEMPLATES)
         text = _fill_template(template, airline)
-        # Cambio 1: real sentiment scores from BERTweet
-        _, confidence = _classify(text)
         dt = _random_date(dt_start, dt_end)
+        generated_texts.append(text)
         rows.append({
             "tweet_id": _unique_id(),
             "airline_sentiment": "neutral",
-            "airline_sentiment_confidence": confidence,
+            "airline_sentiment_confidence": 0.0,    # placeholder
             "negativereason": "",
-            "negativereason_confidence": "",           # Cambio 2: empty for non-negative
+            "negativereason_confidence": "",         # empty for non-negative
             "airline": airline,
             "airline_sentiment_gold": "",
             "name": random.choice(NAMES),
@@ -377,20 +354,19 @@ def generate_dataset(
             "user_timezone": random.choice(TIMEZONES),
         })
 
-    # Generate positive tweets
+    # Positive tweets
     for _ in range(n_pos):
         airline = random.choice(airlines)
         template = random.choice(POSITIVE_TEMPLATES)
         text = _fill_template(template, airline)
-        # Cambio 1: real sentiment scores from BERTweet
-        _, confidence = _classify(text)
         dt = _random_date(dt_start, dt_end)
+        generated_texts.append(text)
         rows.append({
             "tweet_id": _unique_id(),
             "airline_sentiment": "positive",
-            "airline_sentiment_confidence": confidence,
+            "airline_sentiment_confidence": 0.0,    # placeholder
             "negativereason": "",
-            "negativereason_confidence": "",           # Cambio 2: empty for non-negative
+            "negativereason_confidence": "",         # empty for non-negative
             "airline": airline,
             "airline_sentiment_gold": "",
             "name": random.choice(NAMES),
@@ -402,6 +378,18 @@ def generate_dataset(
             "tweet_location": random.choice(LOCATIONS),
             "user_timezone": random.choice(TIMEZONES),
         })
+
+    # -------------------------------------------------------------
+    # Step 2: Batch inference — one model call instead of N
+    # -------------------------------------------------------------
+    if generated_texts:
+        from nlp_utils import batch_predict
+        predictions = batch_predict(generated_texts, batch_size=32)
+        for row, (_, confidence) in zip(rows, predictions):
+            row["airline_sentiment_confidence"] = confidence
+            # For negative tweets, also fill negativereason_confidence
+            if row["airline_sentiment"] == "negative":
+                row["negativereason_confidence"] = confidence
 
     # Shuffle and return
     df = pd.DataFrame(rows)

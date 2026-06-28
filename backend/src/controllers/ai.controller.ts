@@ -1,6 +1,14 @@
+import { logger } from '../utils/logger.js';
 import { Request, Response } from 'express';
 
 const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://localhost:8000';
+const AI_API_KEY = process.env.AI_API_KEY || '';
+
+function aiHeaders(): Record<string, string> {
+  const h: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (AI_API_KEY) h['X-API-Key'] = AI_API_KEY;
+  return h;
+}
 
 /**
  * POST /api/analyze
@@ -29,10 +37,9 @@ export async function analyzeText(req: Request, res: Response): Promise<void> {
     // Call Python FastAPI analyze endpoint
     const response = await fetch(`${AI_SERVICE_URL}/analyze`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: aiHeaders(),
       body: JSON.stringify({ text, airline, topic }),
+      signal: AbortSignal.timeout(30000),
     });
 
     if (!response.ok) {
@@ -51,11 +58,11 @@ export async function analyzeText(req: Request, res: Response): Promise<void> {
       data,
     });
   } catch (error: any) {
-    console.error('Error contacting NLP service:', error);
+    logger.error({ err: error }, 'Error contacting NLP service:');
     res.status(503).json({
       success: false,
-      message: 'NLP Service is currently unavailable. Please ensure the Python service is running.',
-      error: error.message,
+      message: 'NLP Service is currently unavailable.',
+      ...(process.env.NODE_ENV === 'development' ? { error: error.message } : {}),
     });
   }
 }
@@ -83,6 +90,8 @@ export async function uploadDataset(req: Request, res: Response): Promise<void> 
     const response = await fetch(`${AI_SERVICE_URL}/etl/run`, {
       method: 'POST',
       body: formData,
+      headers: AI_API_KEY ? { 'X-API-Key': AI_API_KEY } : {},
+      signal: AbortSignal.timeout(120000),
     });
 
     if (!response.ok) {
@@ -102,11 +111,11 @@ export async function uploadDataset(req: Request, res: Response): Promise<void> 
       data,
     });
   } catch (error: any) {
-    console.error('Error forwarding dataset to NLP service:', error);
+    logger.error({ err: error }, 'Error forwarding dataset to NLP service:');
     res.status(503).json({
       success: false,
-      message: 'NLP service is currently unavailable. Please ensure the Python service is running.',
-      error: error.message,
+      message: 'NLP service is currently unavailable.',
+      ...(process.env.NODE_ENV === 'development' ? { error: error.message } : {}),
     });
   }
 }

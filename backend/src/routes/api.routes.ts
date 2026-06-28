@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import multer from 'multer';
+import rateLimit from 'express-rate-limit';
 import { getKPIs, getTrends } from '../controllers/sentiment.controller.js';
 import { getAirlinesList, getAirlinesSentiment } from '../controllers/airline.controller.js';
 import { getTopicsList, getTopics } from '../controllers/topic.controller.js';
@@ -10,6 +11,13 @@ import pool from '../config/db.js';
 import { requireAuth, requireAdmin } from '../utils/auth-middleware.js';
 
 const router = Router();
+
+// Rate limiter for admin endpoints (NLP inference + ETL + dataset generation)
+const adminLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 20,
+  message: { success: false, message: 'Too many requests. Try again later.' },
+});
 
 // Configure multer in-memory storage for file uploads
 const upload = multer({
@@ -34,7 +42,7 @@ router.get('/health', async (req, res) => {
       status: 'DOWN',
       timestamp: new Date(),
       database: 'DISCONNECTED',
-      error: error.message
+      ...(process.env.NODE_ENV === 'development' ? { error: error.message } : {}),
     });
   }
 });
@@ -54,13 +62,13 @@ router.get('/topics', requireAuth, getTopics);
 // Tweets Routes (Protected - Viewer / Admin)
 router.get('/tweets', requireAuth, getTweets);
 
-// AI / NLP & ETL Ingestion Routes (Restricted - Admin Only)
-router.post('/analyze', requireAdmin, analyzeText);
-router.post('/etl/upload', requireAdmin, upload.single('dataset'), uploadDataset);
+// AI / NLP & ETL Ingestion Routes (Restricted - Admin Only, Rate Limited)
+router.post('/analyze', requireAdmin, adminLimiter, analyzeText);
+router.post('/etl/upload', requireAdmin, adminLimiter, upload.single('dataset'), uploadDataset);
 
-// Dataset Generator Routes (Restricted - Admin Only)
-router.get('/dataset/generate', requireAdmin, generateDataset);
-router.post('/dataset/generate-and-load', requireAdmin, generateAndLoad);
+// Dataset Generator Routes (Restricted - Admin Only, Rate Limited)
+router.get('/dataset/generate', requireAdmin, adminLimiter, generateDataset);
+router.post('/dataset/generate-and-load', requireAdmin, adminLimiter, generateAndLoad);
 
 export default router;
 

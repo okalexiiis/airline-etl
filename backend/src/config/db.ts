@@ -1,5 +1,6 @@
 import pg from 'pg';
 import dotenv from 'dotenv';
+import { logger } from '../utils/logger.js';
 
 dotenv.config();
 
@@ -8,13 +9,12 @@ const { Pool } = pg;
 const connectionString = process.env.DATABASE_URL;
 
 if (!connectionString) {
-  console.error("CRITICAL ERROR: DATABASE_URL is not set in the environment variables!");
+  logger.fatal('DATABASE_URL is not set');
   process.exit(1);
 }
 
 const pool = new Pool({
   connectionString,
-  // Automatically configure SSL for Neon or databases that request it
   ssl: connectionString.includes('sslmode=require') || connectionString.includes('neon.tech')
     ? { rejectUnauthorized: false }
     : false,
@@ -23,9 +23,9 @@ const pool = new Pool({
 // Test the connection on startup
 pool.query('SELECT NOW()', (err, res) => {
   if (err) {
-    console.error('Database connection failed:', err.message);
+    logger.error({ err }, 'Database connection failed');
   } else {
-    console.log('Database connected successfully at:', res.rows[0].now);
+    logger.info({ timestamp: res.rows[0].now }, 'Database connected');
   }
 });
 

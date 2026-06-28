@@ -137,10 +137,7 @@ export const NLPPlayground: React.FC = () => {
             </p>
           </div>
         </div>
-        <span className="playground-status-badge">
-          <span className="playground-status-dot" aria-hidden="true" />
-          Model Ready
-        </span>
+
       </div>
 
       {/* Main Layout: Input + Live Result */}
@@ -248,7 +245,6 @@ export const NLPPlayground: React.FC = () => {
               className="glass-card playground-result-card"
               style={{ '--result-glow': sentConfig.glow } as React.CSSProperties}
             >
-              <div className="playground-result-glow" aria-hidden="true" />
 
               {/* Sentiment badge */}
               <div className="playground-result-header">
@@ -319,10 +315,7 @@ export const NLPPlayground: React.FC = () => {
             </div>
           ) : (
             <div className="glass-card playground-result-empty">
-              <FlaskConical size={40} style={{ color: 'var(--color-text-muted)', opacity: 0.4 }} aria-hidden="true" />
-              <p style={{ color: 'var(--color-text-muted)', fontSize: '0.9rem', textAlign: 'center' }}>
-                Enter a tweet above and click <strong style={{ color: 'var(--color-text-secondary)' }}>Analyze Sentiment</strong> to see the model's prediction here.
-              </p>
+              <p className="playground-empty-hint">Enter text and click Analyze Sentiment</p>
             </div>
           )}
         </div>

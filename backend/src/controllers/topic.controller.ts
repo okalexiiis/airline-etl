@@ -1,3 +1,4 @@
+import { logger } from '../utils/logger.js';
 import { Request, Response } from 'express';
 import pool from '../config/db.js';
 import { buildFilterConditions } from '../utils/queryHelper.js';
@@ -16,11 +17,11 @@ export async function getTopicsList(req: Request, res: Response): Promise<void> 
       data: result.rows
     });
   } catch (error: any) {
-    console.error('Error listing topics:', error);
+    logger.error({ err: error }, 'Error listing topics:');
     res.status(500).json({
       success: false,
       message: 'Failed to retrieve topics list',
-      error: error.message
+      ...(process.env.NODE_ENV === 'development' ? { error: error.message } : {}),
     });
   }
 }
@@ -31,7 +32,11 @@ export async function getTopicsList(req: Request, res: Response): Promise<void> 
  */
 export async function getTopics(req: Request, res: Response): Promise<void> {
   try {
-    const { whereClause, values } = buildFilterConditions(req);
+    const { whereClause, values, errors } = buildFilterConditions(req);
+    if (errors) {
+      res.status(400).json({ success: false, message: 'Invalid filter parameters', errors });
+      return;
+    }
 
     const query = `
       SELECT 
@@ -77,11 +82,11 @@ export async function getTopics(req: Request, res: Response): Promise<void> {
       data
     });
   } catch (error: any) {
-    console.error('Error fetching topic statistics:', error);
+    logger.error({ err: error }, 'Error fetching topic statistics:');
     res.status(500).json({
       success: false,
       message: 'Failed to retrieve topics statistics',
-      error: error.message
+      ...(process.env.NODE_ENV === 'development' ? { error: error.message } : {}),
     });
   }
 }

@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import pool from '../config/db.js';
 import { buildFilterConditions } from '../utils/queryHelper.js';
+import { logger } from '../utils/logger.js';
 
 /**
  * GET /api/airlines/list
@@ -16,22 +17,26 @@ export async function getAirlinesList(req: Request, res: Response): Promise<void
       data: result.rows
     });
   } catch (error: any) {
-    console.error('Error listing airlines:', error);
+    logger.error({ err: error }, 'Error listing airlines');
     res.status(500).json({
       success: false,
       message: 'Failed to retrieve airlines list',
-      error: error.message
+      ...(process.env.NODE_ENV === 'development' ? { error: error.message } : {}),
     });
   }
 }
 
 /**
- * GET /api/airlines/sentiment
+ * GET /api/airlines
  * Returns sentiment comparison statistics grouped by airline
  */
 export async function getAirlinesSentiment(req: Request, res: Response): Promise<void> {
   try {
-    const { whereClause, values } = buildFilterConditions(req);
+    const { whereClause, values, errors } = buildFilterConditions(req);
+    if (errors) {
+      res.status(400).json({ success: false, message: 'Invalid filter parameters', errors });
+      return;
+    }
 
     const query = `
       SELECT 
@@ -78,11 +83,11 @@ export async function getAirlinesSentiment(req: Request, res: Response): Promise
       data
     });
   } catch (error: any) {
-    console.error('Error fetching airline sentiments:', error);
+    logger.error({ err: error }, 'Error fetching airline sentiments');
     res.status(500).json({
       success: false,
       message: 'Failed to retrieve airline sentiment statistics',
-      error: error.message
+      ...(process.env.NODE_ENV === 'development' ? { error: error.message } : {}),
     });
   }
 }

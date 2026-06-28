@@ -1,8 +1,9 @@
 import os
 import shutil
 import tempfile
+import logging
 import pandas as pd
-from fastapi import FastAPI, File, UploadFile, HTTPException, Query
+from fastapi import FastAPI, File, UploadFile, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from typing import Optional, List
@@ -10,40 +11,73 @@ from io import BytesIO
 from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
 
-# Import utilities from shared file
-from nlp_utils import LABEL_MAP, clean_tweet, get_or_create_dim, get_or_create_date
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+)
+logger = logging.getLogger('aerosent')
 
-# Import the new dataset generator
+from nlp_utils import (
+    LABEL_MAP,
+    get_sentiment_pipeline,
+    clean_tweet,
+    cached_inference,
+    etl_insert,
+)
 from dataset_generator import generate_dataset, dataframe_to_csv_bytes
 
-# Load environment variables
 load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
+AI_API_KEY = os.getenv("AI_API_KEY")
 
 if not DATABASE_URL:
-    raise RuntimeError("❌ No se encontró DATABASE_URL en el archivo .env")
+    raise RuntimeError("No se encontro DATABASE_URL en el archivo .env")
 
-# Initialize DB Engine
 engine = create_engine(DATABASE_URL)
 
-# Load BERTweet model once at startup
-from transformers import pipeline as hf_pipeline
-print("⏳ Cargando modelo BERTweet...")
-sentiment_model = hf_pipeline(
-    "text-classification",
-    model="cardiffnlp/twitter-roberta-base-sentiment-latest",
-    max_length=128,
-    truncation=True
-)
-print("✅ Modelo cargado.")
+logger.info("Cargando modelo de sentimiento...")
+get_sentiment_pipeline()  # pre-warm on startup
+logger.info("Modelo cargado.")
 
 app = FastAPI(title="AeroSent NLP API", description="NLP Sentiment Analysis service for AeroSent")
+
+
+# ─── API Key middleware ────────────────────────────────────────────────────────
+
+@app.middleware("http")
+async def verify_api_key(request: Request, call_next):
+    if request.url.path in ("/health", "/ready"):
+        return await call_next(request)
+    if AI_API_KEY:
+        key = request.headers.get("X-API-Key")
+        if not key or key != AI_API_KEY:
+            raise HTTPException(status_code=401, detail="Invalid or missing API key")
+    return await call_next(request)
+
+
+# ─── Health probes ─────────────────────────────────────────────────────────────
+
+@app.get("/health")
+async def health_check():
+    return {"status": "ok"}
+
+@app.get("/ready")
+async def readiness_check():
+    if get_sentiment_pipeline() is None:
+        raise HTTPException(status_code=503, detail="Model not loaded")
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+    except Exception as e:
+        logger.exception("Readiness check failed")
+        raise HTTPException(status_code=503, detail="Database not reachable")
+    return {"status": "ready"}
 
 
 # ─── Pydantic Models ──────────────────────────────────────────────────────────
 
 class AnalyzeRequest(BaseModel):
-    text: str = Field(..., min_length=1, max_length=560, description="The tweet or feedback text to analyze")
+    text: str = Field(..., min_length=1, max_length=560, description="Tweet or feedback text to analyze")
     airline: Optional[str] = Field(None, description="Optional airline name")
     topic: Optional[str] = Field(None, description="Optional topic or complaint category")
 
@@ -66,41 +100,40 @@ class GenerateAndLoadRequest(BaseModel):
 # ─── NLP Inference ────────────────────────────────────────────────────────────
 
 @app.post("/analyze", response_model=AnalyzeResponse)
-async def analyze_text(request: AnalyzeRequest):
+def analyze_text(request: AnalyzeRequest):
+    """Analyze a single tweet. Uses LRU cache for repeated inputs."""
     try:
         clean_txt = clean_tweet(request.text)
         if not clean_txt:
             raise HTTPException(status_code=400, detail="Text is empty or invalid after cleaning")
 
-        result = sentiment_model(clean_txt)[0]
-        sentiment = LABEL_MAP.get(result['label'], result['label'])
-        confidence = round(result['score'], 4)
+        sentiment, confidence = cached_inference(clean_txt)
 
         return AnalyzeResponse(
             cleaned_text=clean_txt,
             sentiment=sentiment,
             confidence=confidence
         )
+    except HTTPException:
+        raise
     except Exception as e:
-        if isinstance(e, HTTPException):
-            raise e
-        raise HTTPException(status_code=500, detail=f"Inference error: {str(e)}")
+        logger.exception("Inference failed")
+        raise HTTPException(status_code=500, detail="Inference failed")
 
 
 # ─── ETL Upload ───────────────────────────────────────────────────────────────
 
 @app.post("/etl/run")
-async def run_etl_upload(file: UploadFile = File(...)):
+def run_etl_upload(file: UploadFile = File(...)):
+    """Upload a CSV and run the ETL pipeline (batch inference + bulk insert)."""
     if not file.filename.endswith('.csv'):
         raise HTTPException(status_code=400, detail="Only CSV files are allowed")
 
-    temp_dir = tempfile.gettempdir()
-    temp_file_path = os.path.join(temp_dir, f"upload_{file.filename}")
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
+        shutil.copyfileobj(file.file, tmp)
+        temp_file_path = tmp.name
 
     try:
-        with open(temp_file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-
         df = pd.read_csv(temp_file_path)
 
         required_cols = ['tweet_id', 'text', 'airline', 'airline_sentiment',
@@ -112,49 +145,16 @@ async def run_etl_upload(file: UploadFile = File(...)):
         df = df[required_cols].dropna(subset=['text', 'airline', 'tweet_created'])
         df['negativereason'] = df['negativereason'].fillna("Not Specified")
 
-        inserted = 0
-        skipped = 0
-
         with engine.begin() as conn:
-            for _, row in df.iterrows():
-                clean_txt = clean_tweet(row['text'])
-                if len(clean_txt) < 5:
-                    skipped += 1
-                    continue
+            result = etl_insert(conn, df, use_model=True)
 
-                result = sentiment_model(clean_txt)[0]
-                sentiment = LABEL_MAP.get(result['label'], result['label'])
-                confidence = round(result['score'], 4)
+        return {"success": True, **result}
 
-                date_id = get_or_create_date(conn, row['tweet_created'])
-                airline_id = get_or_create_dim(conn, "DimAirline", "airline_id", "airline_name", row['airline'])
-                platform_id = get_or_create_dim(conn, "DimPlatform", "platform_id", "platform_name", "Twitter")
-                topic_id = get_or_create_dim(conn, "DimTopic", "topic_id", "topic_name", row['negativereason'])
-
-                conn.execute(text("""
-                    INSERT INTO FactSentimentAnalysis
-                        (tweet_text, tweet_text_clean, sentiment, confidence,
-                         date_id, airline_id, platform_id, topic_id)
-                    VALUES
-                        (:raw, :clean, :sent, :conf, :did, :aid, :pid, :tid)
-                """), {
-                    "raw": row['text'],
-                    "clean": clean_txt,
-                    "sent": sentiment,
-                    "conf": confidence,
-                    "did": date_id,
-                    "aid": airline_id,
-                    "pid": platform_id,
-                    "tid": topic_id
-                })
-                inserted += 1
-
-        return {"success": True, "inserted": inserted, "skipped": skipped}
-
+    except HTTPException:
+        raise
     except Exception as e:
-        if isinstance(e, HTTPException):
-            raise e
-        raise HTTPException(status_code=500, detail=f"ETL execution failed: {str(e)}")
+        logger.exception("ETL execution failed")
+        raise HTTPException(status_code=500, detail="ETL execution failed")
     finally:
         if os.path.exists(temp_file_path):
             os.remove(temp_file_path)
@@ -163,7 +163,7 @@ async def run_etl_upload(file: UploadFile = File(...)):
 # ─── Dataset Generator ────────────────────────────────────────────────────────
 
 @app.get("/dataset/generate")
-async def dataset_generate(
+def dataset_generate(
     n_records: int = Query(100, ge=1, le=5000, description="Number of rows to generate"),
     airlines: Optional[str] = Query(None, description="Comma-separated airline names"),
     sentiment_positive: int = Query(20, ge=0, le=100),
@@ -199,12 +199,15 @@ async def dataset_generate(
             media_type="text/csv",
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Dataset generation failed: {str(e)}")
+        logger.exception("Dataset generation failed")
+        raise HTTPException(status_code=500, detail="Dataset generation failed")
 
 
 @app.post("/dataset/generate-and-load")
-async def dataset_generate_and_load(request: GenerateAndLoadRequest):
+def dataset_generate_and_load(request: GenerateAndLoadRequest):
     """Generate a synthetic dataset in-memory and immediately run the ETL pipeline."""
     try:
         dist = {
@@ -227,54 +230,20 @@ async def dataset_generate_and_load(request: GenerateAndLoadRequest):
         df = df[required_cols].dropna(subset=['text', 'airline', 'tweet_created'])
         df['negativereason'] = df['negativereason'].fillna("Not Specified")
 
-        inserted = 0
-        skipped = 0
-
         with engine.begin() as conn:
-            for _, row in df.iterrows():
-                clean_txt = clean_tweet(row['text'])
-                if len(clean_txt) < 5:
-                    skipped += 1
-                    continue
-
-                # Use the generator's label directly — no model re-inference needed
-                sentiment = row['airline_sentiment'].capitalize()
-                confidence = float(row['airline_sentiment_confidence'])
-
-                date_id = get_or_create_date(conn, row['tweet_created'])
-                airline_id = get_or_create_dim(conn, "DimAirline", "airline_id", "airline_name", row['airline'])
-                platform_id = get_or_create_dim(conn, "DimPlatform", "platform_id", "platform_name", "Twitter")
-                topic_id = get_or_create_dim(conn, "DimTopic", "topic_id", "topic_name", row['negativereason'])
-
-                conn.execute(text("""
-                    INSERT INTO FactSentimentAnalysis
-                        (tweet_text, tweet_text_clean, sentiment, confidence,
-                         date_id, airline_id, platform_id, topic_id)
-                    VALUES
-                        (:raw, :clean, :sent, :conf, :did, :aid, :pid, :tid)
-                """), {
-                    "raw": row['text'],
-                    "clean": clean_txt,
-                    "sent": sentiment,
-                    "conf": confidence,
-                    "did": date_id,
-                    "aid": airline_id,
-                    "pid": platform_id,
-                    "tid": topic_id,
-                })
-                inserted += 1
+            result = etl_insert(conn, df, use_model=False)
 
         return {
             "success": True,
-            "inserted": inserted,
-            "skipped": skipped,
+            **result,
             "generated": request.n_records,
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
-        if isinstance(e, HTTPException):
-            raise e
-        raise HTTPException(status_code=500, detail=f"Generate-and-load failed: {str(e)}")
+        logger.exception("Generate-and-load failed")
+        raise HTTPException(status_code=500, detail="Generate-and-load failed")
 
 
 if __name__ == "__main__":

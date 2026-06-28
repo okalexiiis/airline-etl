@@ -1,3 +1,4 @@
+import { logger } from './logger.js';
 import { Request, Response, NextFunction } from 'express';
 import { auth } from '../config/auth.js';
 
@@ -42,7 +43,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     (req as AuthenticatedRequest).user = session.user;
     next();
   } catch (error) {
-    console.error('Authentication middleware error:', error);
+    logger.error({ err: error }, 'Authentication middleware error:');
     res.status(500).json({
       success: false,
       message: 'Internal server error during authentication check.',
@@ -79,7 +80,7 @@ export async function requireAdmin(req: Request, res: Response, next: NextFuncti
     (req as AuthenticatedRequest).user = session.user;
     next();
   } catch (error) {
-    console.error('Authorization middleware error:', error);
+    logger.error({ err: error }, 'Authorization middleware error:');
     res.status(500).json({
       success: false,
       message: 'Internal server error during authorization check.',

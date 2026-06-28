@@ -1,3 +1,4 @@
+import { logger } from '../utils/logger.js';
 import { Request, Response } from 'express';
 import { z } from 'zod';
 import pool from '../config/db.js';
@@ -30,7 +31,11 @@ export async function getTweets(req: Request, res: Response): Promise<void> {
     const offset = (page - 1) * limit;
 
     // Get filter conditions (for joins with FactSentimentAnalysis and DimDate)
-    const { whereClause, values } = buildFilterConditions(req, 1);
+    const { whereClause, values, errors } = buildFilterConditions(req, 1);
+    if (errors) {
+      res.status(400).json({ success: false, message: 'Invalid filter parameters', errors });
+      return;
+    }
 
     // 1. Query the total count of matching records for pagination metadata
     const countQuery = `
@@ -84,11 +89,11 @@ export async function getTweets(req: Request, res: Response): Promise<void> {
       }
     });
   } catch (error: any) {
-    console.error('Error fetching tweets:', error);
+    logger.error({ err: error }, 'Error fetching tweets:');
     res.status(500).json({
       success: false,
       message: 'Failed to retrieve tweets list',
-      error: error.message
+      ...(process.env.NODE_ENV === 'development' ? { error: error.message } : {}),
     });
   }
 }

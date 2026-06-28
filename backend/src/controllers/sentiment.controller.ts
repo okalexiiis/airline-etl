@@ -1,3 +1,4 @@
+import { logger } from '../utils/logger.js';
 import { Request, Response } from 'express';
 import pool from '../config/db.js';
 import { buildFilterConditions } from '../utils/queryHelper.js';
@@ -8,7 +9,11 @@ import { buildFilterConditions } from '../utils/queryHelper.js';
  */
 export async function getKPIs(req: Request, res: Response): Promise<void> {
   try {
-    const { whereClause, values } = buildFilterConditions(req);
+    const { whereClause, values, errors } = buildFilterConditions(req);
+    if (errors) {
+      res.status(400).json({ success: false, message: 'Invalid filter parameters', errors });
+      return;
+    }
 
     const query = `
       SELECT 
@@ -47,11 +52,11 @@ export async function getKPIs(req: Request, res: Response): Promise<void> {
       }
     });
   } catch (error: any) {
-    console.error('Error fetching KPIs:', error);
+    logger.error({ err: error }, 'Error fetching KPIs:');
     res.status(500).json({
       success: false,
       message: 'Failed to retrieve KPIs statistics',
-      error: error.message
+      ...(process.env.NODE_ENV === 'development' ? { error: error.message } : {}),
     });
   }
 }
@@ -62,7 +67,11 @@ export async function getKPIs(req: Request, res: Response): Promise<void> {
  */
 export async function getTrends(req: Request, res: Response): Promise<void> {
   try {
-    const { whereClause, values } = buildFilterConditions(req);
+    const { whereClause, values, errors } = buildFilterConditions(req);
+    if (errors) {
+      res.status(400).json({ success: false, message: 'Invalid filter parameters', errors });
+      return;
+    }
 
     // Get time-series trends grouped by full_date and sentiment
     const query = `
@@ -115,11 +124,11 @@ export async function getTrends(req: Request, res: Response): Promise<void> {
       data: trendData
     });
   } catch (error: any) {
-    console.error('Error fetching trends:', error);
+    logger.error({ err: error }, 'Error fetching trends:');
     res.status(500).json({
       success: false,
       message: 'Failed to retrieve sentiment trends',
-      error: error.message
+      ...(process.env.NODE_ENV === 'development' ? { error: error.message } : {}),
     });
   }
 }

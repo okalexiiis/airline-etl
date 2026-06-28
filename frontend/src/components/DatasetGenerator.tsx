@@ -53,6 +53,31 @@ const DEFAULT_CONFIG: DatasetConfig = {
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
+function ResultBanner({
+  variant,
+  Icon,
+  title,
+  subtitle,
+  className,
+}: {
+  variant: 'success' | 'error';
+  Icon: React.ComponentType<{ size?: number }>;
+  title: string;
+  subtitle: React.ReactNode;
+  className?: string;
+}) {
+  const role = variant === 'success' ? 'status' : 'alert';
+  return (
+    <div className={`glass-card dg-result-banner dg-result-${variant}${className ? ` ${className}` : ''}`} role={role}>
+      <div className="dg-result-icon"><Icon size={18} /></div>
+      <div>
+        <p className="dg-result-title">{title}</p>
+        <p className="dg-result-subtitle">{subtitle}</p>
+      </div>
+    </div>
+  );
+}
+
 function CheckboxGroup({
   label,
   all,
@@ -349,7 +374,7 @@ export const DatasetGenerator: React.FC = () => {
             <div className="dg-config-col">
               {/* Record count */}
               <div className="glass-card dg-section">
-                <label htmlFor="dg-n-records" className="filter-label" style={{ marginBottom: '0.75rem', display: 'block' }}>
+                <label htmlFor="dg-n-records" className="filter-label dg-section-label">
                   Number of Records
                 </label>
                 <div className="dg-count-row">
@@ -489,27 +514,19 @@ export const DatasetGenerator: React.FC = () => {
 
           {/* Load result / error */}
           {loadResult && (
-            <div className="glass-card dg-result-banner dg-result-success" role="status">
-              <CheckCircle2 size={22} className="dg-result-icon" />
-              <div>
-                <p className="dg-result-title">Successfully loaded into database</p>
-                <p className="dg-result-subtitle">
-                  <strong>{loadResult.inserted.toLocaleString()}</strong> rows inserted ·{' '}
-                  <strong>{loadResult.skipped}</strong> skipped ·{' '}
-                  <strong>{loadResult.generated.toLocaleString()}</strong> generated
-                </p>
-              </div>
-            </div>
+            <ResultBanner variant="success" Icon={CheckCircle2}
+              title="Successfully loaded into database"
+              subtitle={<><strong>{loadResult.inserted.toLocaleString()}</strong> rows inserted ·{' '}
+                <strong>{loadResult.skipped}</strong> skipped ·{' '}
+                <strong>{loadResult.generated.toLocaleString()}</strong> generated</>}
+            />
           )}
 
           {loadError && (
-            <div className="glass-card dg-result-banner dg-result-error" role="alert">
-              <AlertTriangle size={22} className="dg-result-icon" />
-              <div>
-                <p className="dg-result-title">Load failed</p>
-                <p className="dg-result-subtitle">{loadError}</p>
-              </div>
-            </div>
+            <ResultBanner variant="error" Icon={AlertTriangle}
+              title="Load failed"
+              subtitle={loadError}
+            />
           )}
 
           {/* CSV Preview table */}
@@ -610,10 +627,9 @@ export const DatasetGenerator: React.FC = () => {
             <div className="dg-upload-actions">
               <button
                 type="button"
-                className="dg-btn dg-btn-primary"
+                className="dg-btn dg-btn-primary dg-btn-full"
                 onClick={handleUpload}
                 disabled={!selectedFile || uploadLoading}
-                style={{ width: '100%', justifyContent: 'center' }}
               >
                 {uploadLoading ? (
                   <>
@@ -631,26 +647,20 @@ export const DatasetGenerator: React.FC = () => {
 
             {/* Results banners */}
             {uploadResult && (
-              <div className="glass-card dg-result-banner dg-result-success" style={{ marginTop: '1.5rem' }} role="status">
-                <CheckCircle2 size={22} className="dg-result-icon" />
-                <div>
-                  <p className="dg-result-title">Successfully loaded dataset into database</p>
-                  <p className="dg-result-subtitle">
-                    <strong>{uploadResult.inserted.toLocaleString()}</strong> rows successfully ingested ·{' '}
-                    <strong>{uploadResult.skipped.toLocaleString()}</strong> skipped rows (unclean/too short).
-                  </p>
-                </div>
-              </div>
+              <ResultBanner variant="success" Icon={CheckCircle2}
+                title="Successfully loaded dataset into database"
+                subtitle={<><strong>{uploadResult.inserted.toLocaleString()}</strong> rows successfully ingested ·{' '}
+                  <strong>{uploadResult.skipped.toLocaleString()}</strong> skipped rows (unclean/too short).</>}
+                className="dg-result-banner-mt"
+              />
             )}
 
             {uploadError && (
-              <div className="glass-card dg-result-banner dg-result-error" style={{ marginTop: '1.5rem' }} role="alert">
-                <AlertTriangle size={22} className="dg-result-icon" />
-                <div>
-                  <p className="dg-result-title">Upload Failed</p>
-                  <p className="dg-result-subtitle">{uploadError}</p>
-                </div>
-              </div>
+              <ResultBanner variant="error" Icon={AlertTriangle}
+                title="Upload Failed"
+                subtitle={uploadError}
+                className="dg-result-banner-mt"
+              />
             )}
           </div>
 
@@ -690,7 +700,7 @@ export const DatasetGenerator: React.FC = () => {
             </div>
             <div className="dg-schema-note">
               <AlertTriangle size={14} style={{ color: 'var(--color-neutral)', flexShrink: 0, marginTop: '0.1rem' }} />
-              <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--color-text-muted)', lineHeight: '1.4' }}>
+              <p className="dg-schema-note-text">
                 Note: Tweets with less than 5 characters of cleaned text will be skipped during analysis. Sentiment predictions are automatically run through the RoBERTa model to keep facts standardized.
               </p>
             </div>

@@ -3,28 +3,27 @@ import {
   RefreshCw, 
   AlertTriangle,
   Flame,
-  LayoutDashboard,
-  FlaskConical,
-  Database,
   LogOut,
   User as UserIcon
 } from 'lucide-react';
 import { 
   type DashboardFilters, 
   type KPIData, 
-  type TrendDataPoint, 
-  type AirlineSentiment, 
-  type TopicSentiment, 
   type PaginatedTweets,
+  type AirlineSentiment,
+  type TrendDataPoint,
+  type TopicSentiment,
   fetchKPIs,
-  fetchTrends,
+  fetchTweets,
   fetchAirlinesSentiment,
-  fetchTopics,
-  fetchTweets
+  fetchTrends,
+  fetchTopics
 } from './services/api';
+import { ContextBar, type ContextFilters } from './components/ContextBar';
+import { FiltersBar, type ExploreFilters } from './components/FiltersBar';
 import { KPICards } from './components/KPICards';
-import { FiltersBar } from './components/FiltersBar';
-import { ChartsSection } from './components/ChartsSection';
+import { AlertsPanel } from './components/AlertsPanel';
+import { DashboardCharts } from './components/DashboardCharts';
 import { TweetsFeed } from './components/TweetsFeed';
 import { NLPPlayground } from './components/NLPPlayground';
 import { DatasetGenerator } from './components/DatasetGenerator';
@@ -36,111 +35,137 @@ function App() {
   const user = sessionData?.user as any;
   const isAdmin = user?.role === 'Admin';
 
-  // View mode: 'dashboard' | 'playground' | 'generator'
-  const [view, setView] = useState<'dashboard' | 'playground' | 'generator'>('dashboard');
+  const [view, setView] = useState<'dashboard' | 'explore' | 'playground' | 'generator'>('dashboard');
 
-  // Reset to dashboard if user is not an Admin but somehow lands on generator view
   useEffect(() => {
     if (user && user.role !== 'Admin' && view === 'generator') {
       setView('dashboard');
     }
   }, [user, view]);
 
-  // Filter and pagination states
-  const [filters, setFilters] = useState<DashboardFilters>({
+  // Shared context: airline + date range
+  const [contextFilters, setContextFilters] = useState<ContextFilters>({
     airlineId: undefined,
-    platformId: undefined,
-    topicId: undefined,
-    sentiment: undefined,
     startDate: undefined,
     endDate: undefined,
   });
+
+  // Explore-local: sentiment + topic
+  const [exploreFilters, setExploreFilters] = useState<ExploreFilters>({
+    sentiment: undefined,
+    topicId: undefined,
+  });
+
   const [currentPage, setCurrentPage] = useState<number>(1);
 
-  // Data states
   const [kpis, setKpis] = useState<KPIData | null>(null);
-  const [trends, setTrends] = useState<TrendDataPoint[]>([]);
   const [airlinesSentiment, setAirlinesSentiment] = useState<AirlineSentiment[]>([]);
+  const [trends, setTrends] = useState<TrendDataPoint[]>([]);
   const [topicsSentiment, setTopicsSentiment] = useState<TopicSentiment[]>([]);
   const [paginatedTweets, setPaginatedTweets] = useState<PaginatedTweets | null>(null);
 
-  // App loading/error states
   const [loading, setLoading] = useState<boolean>(true);
   const [tweetsLoading, setTweetsLoading] = useState<boolean>(false);
+  const [tweetError, setTweetError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Fetch general analytics when filters change
+  // Dashboard analytics depend on contextFilters only
   useEffect(() => {
     const loadAnalytics = async () => {
       setLoading(true);
       setError(null);
       try {
-        const [kpiRes, trendRes, airlineRes, topicRes] = await Promise.all([
-          fetchKPIs(filters),
-          fetchTrends(filters),
-          fetchAirlinesSentiment(filters),
-          fetchTopics(filters)
+        const analyticsFilters: DashboardFilters = {
+          airlineId: contextFilters.airlineId,
+          startDate: contextFilters.startDate,
+          endDate: contextFilters.endDate,
+        };
+        const [kpiRes, airlineRes, trendRes, topicRes] = await Promise.all([
+          fetchKPIs(analyticsFilters),
+          fetchAirlinesSentiment(analyticsFilters),
+          fetchTrends(analyticsFilters),
+          fetchTopics(analyticsFilters)
         ]);
         setKpis(kpiRes);
-        setTrends(trendRes);
         setAirlinesSentiment(airlineRes);
+        setTrends(trendRes);
         setTopicsSentiment(topicRes);
       } catch (err: any) {
-        console.error('Error fetching analytics:', err);
-        setError(err.message || 'Failed to load dashboard statistics. Please verify that the API server is active.');
+        setError(err.message || 'Failed to load dashboard statistics.');
       } finally {
         setLoading(false);
       }
     };
     loadAnalytics();
-  }, [filters]);
+  }, [contextFilters]);
 
-  // Fetch tweets separately when filters OR page changes
+  // Tweets depend on contextFilters + exploreFilters + page
   useEffect(() => {
     const loadTweetsData = async () => {
       setTweetsLoading(true);
+      setTweetError(null);
       try {
-        const tweetRes = await fetchTweets(filters, currentPage, 8);
+        const merged: DashboardFilters = {
+          airlineId: contextFilters.airlineId,
+          startDate: contextFilters.startDate,
+          endDate: contextFilters.endDate,
+          sentiment: exploreFilters.sentiment,
+          topicId: exploreFilters.topicId,
+        };
+        const tweetRes = await fetchTweets(merged, currentPage, 8);
         setPaginatedTweets(tweetRes);
-      } catch (err) {
-        console.error('Error loading tweets:', err);
+      } catch (err: any) {
+        setTweetError(err.message || 'Failed to load tweet data.');
       } finally {
         setTweetsLoading(false);
       }
     };
     loadTweetsData();
-  }, [filters, currentPage]);
+  }, [contextFilters, exploreFilters, currentPage]);
 
-  // Manual refresh triggers both concurrently without locking the UI
   const handleRefresh = async () => {
     setRefreshing(true);
     setError(null);
+    setTweetError(null);
     try {
-      const [kpiRes, trendRes, airlineRes, topicRes, tweetRes] = await Promise.all([
-        fetchKPIs(filters),
-        fetchTrends(filters),
-        fetchAirlinesSentiment(filters),
-        fetchTopics(filters),
-        fetchTweets(filters, currentPage, 8)
+      const analyticsFilters: DashboardFilters = {
+        airlineId: contextFilters.airlineId,
+        startDate: contextFilters.startDate,
+        endDate: contextFilters.endDate,
+      };
+      const tweetFilters: DashboardFilters = {
+        ...analyticsFilters,
+        sentiment: exploreFilters.sentiment,
+        topicId: exploreFilters.topicId,
+      };
+      const [kpiRes, airlineRes, trendRes, topicRes, tweetRes] = await Promise.all([
+        fetchKPIs(analyticsFilters),
+        fetchAirlinesSentiment(analyticsFilters),
+        fetchTrends(analyticsFilters),
+        fetchTopics(analyticsFilters),
+        fetchTweets(tweetFilters, currentPage, 8)
       ]);
       setKpis(kpiRes);
-      setTrends(trendRes);
       setAirlinesSentiment(airlineRes);
+      setTrends(trendRes);
       setTopicsSentiment(topicRes);
       setPaginatedTweets(tweetRes);
     } catch (err: any) {
-      console.error('Error refreshing data:', err);
       setError(err.message || 'Failed to refresh data.');
     } finally {
       setRefreshing(false);
     }
   };
 
-  // Reset page when filters change
-  const handleFilterChange = (newFilters: DashboardFilters) => {
-    setFilters(newFilters);
-    setCurrentPage(1); // Go back to first page
+  const handleContextChange = (newCtx: ContextFilters) => {
+    setContextFilters(newCtx);
+    setCurrentPage(1);
+  };
+
+  const handleExploreChange = (newExplore: ExploreFilters) => {
+    setExploreFilters(newExplore);
+    setCurrentPage(1);
   };
 
   const handlePageChange = (newPage: number) => {
@@ -151,7 +176,7 @@ function App() {
     return (
       <div className="loader-wrapper" aria-busy="true" aria-live="polite">
         <div className="pulse-loader" />
-        <p className="brand-subtitle" style={{ letterSpacing: '0.05em' }}>Synchronizing Secure Session...</p>
+        <p className="brand-subtitle" style={{ letterSpacing: '0.05em' }}>Loading...</p>
       </div>
     );
   }
@@ -160,9 +185,10 @@ function App() {
     return <AuthPage onLoginSuccess={refetchSession} />;
   }
 
+  const showRefresh = view === 'dashboard' || view === 'explore';
+
   return (
     <div className="dashboard-container">
-      {/* Header Section */}
       <header className="dashboard-header">
         <div className="brand-group">
           <div className="brand-logo-glow" aria-hidden="true">
@@ -170,45 +196,44 @@ function App() {
           </div>
           <div>
             <h1 className="brand-title">AeroSent</h1>
-            <p className="brand-subtitle">Twitter Airline Sentiment Star-Schema Analyzer</p>
+            <p className="brand-subtitle">Sentiment Analytics</p>
           </div>
         </div>
 
         <div className="header-actions">
-          {/* Tab navigation */}
-          <nav className="nav-tab-bar" aria-label="Main navigation">
+          <nav className="minimal-nav" aria-label="Main navigation">
             <button
-              id="nav-dashboard"
-              className={`nav-tab${view === 'dashboard' ? ' active' : ''}`}
+              className={`nav-link${view === 'dashboard' ? ' active' : ''}`}
               onClick={() => setView('dashboard')}
               aria-current={view === 'dashboard' ? 'page' : undefined}
             >
-              <LayoutDashboard size={15} aria-hidden="true" />
               Dashboard
             </button>
             <button
-              id="nav-playground"
-              className={`nav-tab${view === 'playground' ? ' active' : ''}`}
+              className={`nav-link${view === 'explore' ? ' active' : ''}`}
+              onClick={() => setView('explore')}
+              aria-current={view === 'explore' ? 'page' : undefined}
+            >
+              Explore
+            </button>
+            <button
+              className={`nav-link${view === 'playground' ? ' active' : ''}`}
               onClick={() => setView('playground')}
               aria-current={view === 'playground' ? 'page' : undefined}
             >
-              <FlaskConical size={15} aria-hidden="true" />
               NLP Playground
             </button>
             {isAdmin && (
               <button
-                id="nav-generator"
-                className={`nav-tab${view === 'generator' ? ' active' : ''}`}
+                className={`nav-link${view === 'generator' ? ' active' : ''}`}
                 onClick={() => setView('generator')}
                 aria-current={view === 'generator' ? 'page' : undefined}
               >
-                <Database size={15} aria-hidden="true" />
-                Dataset Generator
+                Dataset Manager
               </button>
             )}
           </nav>
 
-          {/* User profile & logout */}
           <div className="user-profile-badge">
             <div className="user-icon-circle">
               <UserIcon size={12} color="#ffffff" />
@@ -229,17 +254,16 @@ function App() {
             </button>
           </div>
 
-          {view === 'dashboard' && (
+          {showRefresh && (
           <button 
             className="btn-refresh" 
             onClick={handleRefresh}
             disabled={loading || refreshing}
-            aria-label="Refresh Dashboard Data"
+            aria-label="Refresh data"
           >
             <RefreshCw 
               size={14} 
               className={refreshing ? 'spin-animation' : ''} 
-              style={{ animation: refreshing ? 'spin 1s linear infinite' : 'none' }}
               aria-hidden="true" 
             />
             {refreshing ? 'Refreshing...' : 'Refresh'}
@@ -248,58 +272,53 @@ function App() {
         </div>
       </header>
 
-      {/* Filters Bar — only on Dashboard */}
-      {view === 'dashboard' && (
-        <FiltersBar filters={filters} onFilterChange={handleFilterChange} />
+      {/* Shared context bar */}
+      {(view === 'dashboard' || view === 'explore') && (
+        <ContextBar filters={contextFilters} onChange={handleContextChange} />
       )}
 
-      {/* NLP Playground View */}
       {view === 'playground' && <NLPPlayground />}
-
-      {/* Dataset Generator View */}
       {view === 'generator' && <DatasetGenerator />}
 
-      {/* Main Dashboard Viewport */}
       {view === 'dashboard' && (
-        loading ? (
-        <div className="loader-wrapper" aria-busy="true" aria-live="polite">
-          <div className="pulse-loader" />
-          <p className="brand-subtitle" style={{ letterSpacing: '0.05em' }}>Loading Dashboard Analytics...</p>
-        </div>
-      ) : error ? (
+        error ? (
         <article className="glass-card error-wrapper" role="alert">
-          <div className="kpi-icon-wrapper error-icon" style={{ width: '3.5rem', background: 'rgba(244, 63, 94, 0.08)' }} aria-hidden="true">
+          <div className="kpi-icon-wrapper error-icon error-banner-icon" aria-hidden="true">
             <AlertTriangle size={32} />
           </div>
-          <h2 className="chart-title" style={{ fontSize: '1.5rem' }}>Failed to Sync Dashboard</h2>
-          <p className="brand-subtitle" style={{ maxWidth: '480px', margin: '0 auto' }}>
+          <h2 className="chart-title error-banner-title">Failed to Sync Dashboard</h2>
+          <p className="brand-subtitle error-banner-desc">
             {error}
           </p>
-          <button className="btn-refresh" onClick={handleRefresh} style={{ marginTop: '1rem' }}>
+          <button className="btn-refresh error-banner-btn" onClick={handleRefresh}>
             Try Again
           </button>
         </article>
       ) : (
         <>
-          {/* Metrics summary widgets */}
-          <KPICards kpis={kpis} />
-
-          {/* Charts section */}
-          <ChartsSection 
-            trends={trends} 
-            airlines={airlinesSentiment} 
-            topics={topicsSentiment} 
+          <KPICards kpis={kpis} loading={loading} />
+          <AlertsPanel
+            airlinesSentiment={airlinesSentiment}
+            onSelectAirline={(id) => handleContextChange({ ...contextFilters, airlineId: id })}
+            activeAirlineId={contextFilters.airlineId}
+            loading={loading}
           />
+          <DashboardCharts trends={trends} topics={topicsSentiment} airlines={airlinesSentiment} kpis={kpis} loading={loading} />
+        </>
+      )
+      )}
 
-          {/* Detailed list explorer */}
+      {view === 'explore' && (
+        <>
+          <FiltersBar filters={exploreFilters} onChange={handleExploreChange} />
           <TweetsFeed 
             paginatedTweets={paginatedTweets}
             currentPage={currentPage}
             onPageChange={handlePageChange}
             loading={tweetsLoading}
+            error={tweetError}
           />
         </>
-      )
       )}
     </div>
   );

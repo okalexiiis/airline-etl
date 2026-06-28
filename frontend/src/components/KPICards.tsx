@@ -1,97 +1,106 @@
 import React from 'react';
-import { 
-  MessageSquare, 
-  Target, 
-  Smile, 
-  Meh, 
-  Frown 
-} from 'lucide-react';
 import type { KPIData } from '../services/api';
 
 interface KPICardsProps {
   kpis: KPIData | null;
+  loading?: boolean;
 }
 
-export const KPICards: React.FC<KPICardsProps> = ({ kpis }) => {
-  if (!kpis) return null;
+const SkeletonCard: React.FC = () => (
+  <article className="glass-card kpi-card kpi-skeleton-card skeleton-pulse" aria-hidden="true">
+    <div className="kpi-header">
+      <div className="kpi-skeleton-tag" />
+    </div>
+    <div className="kpi-value-group kpi-skeleton-value-group">
+      <div className="kpi-skeleton-value" />
+      <div className="kpi-skeleton-meta" />
+    </div>
+  </article>
+);
 
-  const { totalTweets, avgConfidence, sentimentCounts, sentimentPercentages } = kpis;
+const ZeroStateCard: React.FC<{
+  title: string;
+  highlighted?: boolean;
+}> = ({ title, highlighted }) => (
+  <article className={`glass-card kpi-card kpi-zero-card${highlighted ? ' kpi-highlight-reputation' : ''}`}>
+    <div className="kpi-header">
+      <h2 className="kpi-title">{title}</h2>
+    </div>
+    <div className="kpi-value-group kpi-zero-value-group">
+      <div className="kpi-value">0</div>
+    </div>
+  </article>
+);
+
+export const KPICards: React.FC<KPICardsProps> = ({ kpis, loading = false }) => {
+  if (loading) {
+    return (
+      <section className="kpi-grid-four" aria-label="Key Performance Indicators" aria-busy="true">
+        <SkeletonCard />
+        <SkeletonCard />
+        <SkeletonCard />
+        <SkeletonCard />
+      </section>
+    );
+  }
+
+  if (!kpis) {
+    return (
+      <section className="kpi-grid-four" aria-label="Key Performance Indicators">
+        <ZeroStateCard title="Tweet Volume" />
+        <ZeroStateCard title="Negative Mentions" />
+        <ZeroStateCard title="NLP Confidence" />
+        <ZeroStateCard title="Reputation Score" highlighted />
+      </section>
+    );
+  }
+
+  const { totalTweets, avgConfidence, sentimentCounts } = kpis;
+
+  const posCount = sentimentCounts.positive || 0;
+  const negCount = sentimentCounts.negative || 0;
+  const totalSentiment = posCount + negCount;
+  const reputationScore = totalSentiment > 0
+    ? Math.round((posCount / totalSentiment) * 100)
+    : 50;
 
   return (
-    <section className="kpi-grid" aria-label="Key Performance Indicators">
-      {/* Total Tweets Card */}
+    <section className="kpi-grid-four" aria-label="Key Performance Indicators">
       <article className="glass-card kpi-card">
         <div className="kpi-header">
-          <h2 className="kpi-title">Total Tweets</h2>
-          <div className="kpi-icon-wrapper" aria-hidden="true">
-            <MessageSquare size={20} color="#86a8e7" />
-          </div>
+          <h2 className="kpi-title">Tweet Volume</h2>
         </div>
         <div className="kpi-value-group">
           <div className="kpi-value">{totalTweets.toLocaleString()}</div>
-          <span className="kpi-meta">analyzed</span>
         </div>
       </article>
 
-      {/* Average Model Confidence Card */}
       <article className="glass-card kpi-card">
         <div className="kpi-header">
-          <h2 className="kpi-title">Model Confidence</h2>
-          <div className="kpi-icon-wrapper" aria-hidden="true">
-            <Target size={20} color="#a855f7" />
+          <h2 className="kpi-title">Negative Mentions</h2>
+        </div>
+        <div className="kpi-value-group">
+          <div className="kpi-value">
+            {totalTweets > 0 ? Math.round((negCount / totalTweets) * 100) : 0}%
           </div>
+        </div>
+      </article>
+
+      <article className="glass-card kpi-card">
+        <div className="kpi-header">
+          <h2 className="kpi-title">NLP Confidence</h2>
         </div>
         <div className="kpi-value-group">
           <div className="kpi-value">{Math.round(avgConfidence * 100)}%</div>
-          <span className="kpi-meta">average score</span>
         </div>
       </article>
 
-      {/* Positive Sentiment Card */}
-      <article className="glass-card kpi-card glow-positive">
+      <article className="glass-card kpi-card kpi-highlight-reputation">
         <div className="kpi-header">
-          <h2 className="kpi-title">Positive</h2>
-          <div className="kpi-icon-wrapper" style={{ background: 'rgba(16, 185, 129, 0.08)' }} aria-hidden="true">
-            <Smile size={20} color="#10b981" />
-          </div>
+          <h2 className="kpi-title">Reputation Score</h2>
         </div>
         <div className="kpi-value-group">
-          <div className="kpi-value">{sentimentPercentages.positive}%</div>
-          <span className="kpi-meta" style={{ color: '#10b981' }}>
-            {sentimentCounts.positive.toLocaleString()} tweets
-          </span>
-        </div>
-      </article>
-
-      {/* Neutral Sentiment Card */}
-      <article className="glass-card kpi-card glow-neutral">
-        <div className="kpi-header">
-          <h2 className="kpi-title">Neutral</h2>
-          <div className="kpi-icon-wrapper" style={{ background: 'rgba(245, 158, 11, 0.08)' }} aria-hidden="true">
-            <Meh size={20} color="#f59e0b" />
-          </div>
-        </div>
-        <div className="kpi-value-group">
-          <div className="kpi-value">{sentimentPercentages.neutral}%</div>
-          <span className="kpi-meta" style={{ color: '#f59e0b' }}>
-            {sentimentCounts.neutral.toLocaleString()} tweets
-          </span>
-        </div>
-      </article>
-
-      {/* Negative Sentiment Card */}
-      <article className="glass-card kpi-card glow-negative">
-        <div className="kpi-header">
-          <h2 className="kpi-title">Negative</h2>
-          <div className="kpi-icon-wrapper" style={{ background: 'rgba(244, 63, 94, 0.08)' }} aria-hidden="true">
-            <Frown size={20} color="#f43f5e" />
-          </div>
-        </div>
-        <div className="kpi-value-group">
-          <div className="kpi-value">{sentimentPercentages.negative}%</div>
-          <span className="kpi-meta" style={{ color: '#f43f5e' }}>
-            {sentimentCounts.negative.toLocaleString()} tweets
-          </span>
+          <div className="kpi-value">{reputationScore}</div>
         </div>
       </article>
     </section>
